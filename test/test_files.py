@@ -240,75 +240,76 @@ def test_artifactory_boot_files(artifactory_bts):
     if artifactory_bts:
         fail_flag = False
         normalized_abts = list()
+        descriptor = None
         base_path = os.path.commonpath(artifactory_bts).replace(":/","://")
 
         print(f"base_path: {base_path} ")
-        # Normalize all paths for descriptor selection
+        # find descriptor
+        descriptor_avail = False
+        fallback_descriptor_avail = False
         for abt in artifactory_bts:
             nbt = '/boot' + str(abt).replace(str(base_path),'')
+            if nbt == DESCRIPTOR_FILE:
+                descriptor = abt
+                descriptor_avail = True
+            elif nbt == FALLBACK_DESCRIPTOR_FILE:
+                descriptor = abt
+                fallback_descriptor_avail = True
             normalized_abts.append(nbt)
-
-        # Use helper to select descriptor file
-        descriptor_path = get_descriptor_with_fallback(normalized_abts)
-        print(f'descriptor_path: {descriptor_path}')
-        if descriptor_path:
-            # Find the actual artifactory path matching the descriptor
-            descriptor = None
-            for abt in artifactory_bts:
-                nbt = '/boot' + str(abt).replace(str(base_path),'')
-                if nbt == descriptor_path:
-                    descriptor = abt
-                    break
-            print(f'Using descriptor: {descriptor_path}')
-            bts = get_boot_files(host=None, descriptor=str(descriptor))
-
-            # check for missing files based from the descriptor
-            for bt in bts:
-                condition = (bt[1] in normalized_abts)
-                message = 'Missing File: Project:{} File:{}'.format(bt[0],bt[1])
-                check.is_true(condition, message)
-                if condition:
-                    print(f'Found {bt}')
-                else:
-                    fail_flag = True
-
-            # check for unexpected files not defined on the descriptor
-            bts_from_descriptor = [ bt[1] for bt in bts ]
-            for nbt in normalized_abts:
-                for file in DEFAULT_FILES:
-                    default_file = (file in normalized_abts)
-                if not default_file:
-                    condition = (nbt in bts_from_descriptor)
-                    message = 'Undefined file: {}'.format(nbt)
-                    check.is_true(condition, message)
-                    if condition:
-                        print(f'Found {nbt}')
-                    else:
-                        fail_flag = True
-
-            # check for missing default files
-            for file in DEFAULT_FILES:
-                condition = (file in normalized_abts)
-                message = 'Missing default file: {}'.format(file)
-                check.is_true(condition, message)
-                if condition:
-                    print(f'Found {file}')
-                else:
-                    fail_flag = True
-                # fallback logic: check for fallback files if default files are missing
-                missing_defaults = [file for file in DEFAULT_FILES if file not in normalized_abts]
-                if missing_defaults:
-                    for fallback_file in FALLBACK_FILES:
-                        condition = (fallback_file in normalized_abts)
-                        message = f'Fallback file found for missing defaults: {fallback_file}'
-                        check.is_true(condition, message)
-                        if condition:
-                            print(f'Fallback found: {fallback_file}')
-                        else:
-                            print(f'No fallback found for: {fallback_file}')
-
-            assert not fail_flag
+        if descriptor_avail:
+            print(f'Found {DESCRIPTOR_FILE}')
+        elif fallback_descriptor_avail:
+            print(f'Found fallback descriptor: {FALLBACK_DESCRIPTOR_FILE}')
         else:
             print(f'FAILURE: Missing both {DESCRIPTOR_FILE} and {FALLBACK_DESCRIPTOR_FILE}')
-            assert False, 'No descriptor file found'
+        assert descriptor_avail or fallback_descriptor_avail
+        #get boot files from descriptor
+        bts = get_boot_files(host=None, descriptor=str(descriptor))
+
+        # check for missing files based from the descriptor
+        for bt in bts:
+            condition = (bt[1] in normalized_abts)
+            message = 'Missing File: Project:{} File:{}'.format(bt[0],bt[1])
+            check.is_true(condition, message)
+            if condition:
+                print(f'Found {bt}')
+            else:
+                fail_flag = True
+
+        # check for unexpected files not defined on the descriptor
+        bts_from_descriptor = [ bt[1] for bt in bts ]
+        for nbt in normalized_abts:
+            for file in DEFAULT_FILES:
+                default_file = (file in normalized_abts)
+            if not default_file:
+                condition = (nbt in bts_from_descriptor)
+                message = 'Undefined file: {}'.format(nbt)
+                check.is_true(condition, message)
+                if condition:
+                    print(f'Found {nbt}')
+                else:
+                    fail_flag = True
+
+        # check for missing default files
+        for file in DEFAULT_FILES:
+            condition = (file in normalized_abts)
+            message = 'Missing default file: {}'.format(file)
+            check.is_true(condition, message)
+            if condition:
+                print(f'Found {file}')
+            else:
+                fail_flag = True
+            # fallback logic: check for fallback files if default files are missing
+            missing_defaults = [file for file in DEFAULT_FILES if file not in normalized_abts]
+            if missing_defaults:
+                for fallback_file in FALLBACK_FILES:
+                    condition = (fallback_file in normalized_abts)
+                    message = f'Fallback file found for missing defaults: {fallback_file}'
+                    check.is_true(condition, message)
+                    if condition:
+                        print(f'Fallback found: {fallback_file}')
+                    else:
+                        print(f'No fallback found for: {fallback_file}')
+
+        assert not fail_flag
 
