@@ -250,6 +250,7 @@ def test_artifactory_boot_files(artifactory_bts):
 
         # Use helper to select descriptor file
         descriptor_path = get_descriptor_with_fallback(normalized_abts)
+        print(f'descriptor_path: {descriptor_path}')
         if descriptor_path:
             # Find the actual artifactory path matching the descriptor
             descriptor = None
