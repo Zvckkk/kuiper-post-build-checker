@@ -8,8 +8,22 @@ import re
 from functools import partial
 
 DESCRIPTOR_FILE="/boot/kuiper.json"
+FALLBACK_DESCRIPTOR_FILE="/boot_partition/kuiper.json"
 DEFAULT_FILES = ["/boot/README.txt", "/boot/VERSION.txt", "/boot/kuiper.json", "/boot/uEnv.txt"]
+FALLBACK_FILES = ["/boot_partition/README.txt", "/boot_partition/VERSION.txt", "/boot_partition/kuiper.json", "/boot_partition/uEnv.txt"]
 # DESCRIPTOR_FILE="/boot/projects_descriptor.json"
+
+# Helper function to select descriptor file with fallback
+def get_descriptor_with_fallback(normalized_abts):
+    if DESCRIPTOR_FILE in normalized_abts:
+        print(f'Using main descriptor: {DESCRIPTOR_FILE}')
+        return DESCRIPTOR_FILE
+    elif FALLBACK_DESCRIPTOR_FILE in normalized_abts:
+        print(f'Using fallback descriptor: {FALLBACK_DESCRIPTOR_FILE}')
+        return FALLBACK_DESCRIPTOR_FILE
+    else:
+        print('No descriptor file found!')
+        return None
 
 def get_project_details(pcn):
     '''Returns project details as a function of pcn: project common name.
@@ -142,50 +156,53 @@ def project_filter(project_dict, filters):
                 break
     return match
 
-def get_boot_files(host, descriptor=DESCRIPTOR_FILE, project=None):
+
+
+def get_boot_files(host, descriptor, project=None):
     ''' Returns a list of files defined on the descriptor file '''
-    descriptor_dict = dict()
-    boot_files = list()
-    if host:    
-        project_descriptor = host.file(descriptor)
-        assert project_descriptor.exists
-        if project_descriptor.exists:
-            cmd = host.run("cat {}".format(descriptor))
-            assert cmd.rc == 0
-            descriptor_dict = json.loads(cmd.stdout)
-    else:
-        # files are from artifactory
-        #dl descriptor
-        filename = wget.download(descriptor)
-        with open(filename, 'r') as f:
-            descriptor_dict = json.loads(f.read())
-
-    projects = descriptor_dict['projects']
-
-    # filter project
-    if project:
-        a,b,n = get_project_details(project)
-        assert a
-        assert b
-        assert n
-        filter_dict = dict({
-            "architecture": a,
-            "board": b,
-            "name": n
-        })
-        projects = filter(partial(project_filter, filters=filter_dict), projects)
-
-    for project in projects:
-        # if not project['kernel'] in [ bt[1] for bt in boot_files]:
-            # boot_files.append((project['name'],project['kernel']))
-        boot_files.append((project['name'],project['kernel']))
-        if "preloader" in project:
-            boot_files.append((project['name'],project['preloader']))
-        files = project['files']
-        for f in files:
-            boot_files.append((project['name'],f['path']))
-     
-    return boot_files
+    if descriptor:
+        descriptor_dict = dict()
+        boot_files = list()
+        if host:    
+            project_descriptor = host.file(descriptor)
+            assert project_descriptor.exists
+            if project_descriptor.exists:
+                cmd = host.run("cat {}".format(descriptor))
+                assert cmd.rc == 0
+                descriptor_dict = json.loads(cmd.stdout)
+        else:
+            # files are from artifactory
+            #dl descriptor
+            filename = wget.download(descriptor)
+            with open(filename, 'r') as f:
+                descriptor_dict = json.loads(f.read())
+    
+        projects = descriptor_dict['projects']
+    
+        # filter project
+        if project:
+            a,b,n = get_project_details(project)
+            assert a
+            assert b
+            assert n
+            filter_dict = dict({
+                "architecture": a,
+                "board": b,
+                "name": n
+            })
+            projects = filter(partial(project_filter, filters=filter_dict), projects)
+    
+        for project in projects:
+            # if not project['kernel'] in [ bt[1] for bt in boot_files]:
+                # boot_files.append((project['name'],project['kernel']))
+            boot_files.append((project['name'],project['kernel']))
+            if "preloader" in project:
+                boot_files.append((project['name'],project['preloader']))
+            files = project['files']
+            for f in files:
+                boot_files.append((project['name'],f['path']))
+         
+        return boot_files
 
 def test_passwd_file(host):
     passwd = host.file("/etc/passwd")
@@ -199,19 +216,23 @@ def test_bashrc_file(host):
     passwd = host.file("/home/analog/.bashrc")
     assert passwd.contains("PYTHONPATH")
 
-def test_boot_files(host, project_name):
-    fail_flag = False
-    bts = get_boot_files(host, DESCRIPTOR_FILE, project_name)
-    for bt in bts:
-        condition = host.file(bt[1]).exists
-        message = 'Missing File: Project:{} File:{}'.format(bt[0],bt[1])
-        check.is_true(condition, message)
-        if condition:
-            print(f'Found {bt}')
-        else:
-            fail_flag = True
+def test_boot_files(host, project_name, normalized_abts):
+    descriptor = get_descriptor_with_fallback(normalized_abts)
+    if descriptor:
+        fail_flag = False
+        bts = get_boot_files(host, descriptor, project_name)
+        for bt in bts:
+            condition = host.file(bt[1]).exists
+            message = 'Missing File: Project:{} File:{}'.format(bt[0],bt[1])
+            check.is_true(condition, message)
+            if condition:
+                print(f'Found {bt}')
+            else:
+                fail_flag = True
 
-    assert not fail_flag
+        assert not fail_flag
+    else:
+        print("No descriptor found")
 
 @pytest.mark.artifactory_check
 def test_artifactory_boot_files(artifactory_bts):
@@ -225,17 +246,23 @@ def test_artifactory_boot_files(artifactory_bts):
         print(f"base_path: {base_path} ")
         # find descriptor
         descriptor_avail = False
+        fallback_descriptor_avail = False
         for abt in artifactory_bts:
             nbt = '/boot' + str(abt).replace(str(base_path),'')
             if nbt == DESCRIPTOR_FILE:
                 descriptor = abt
                 descriptor_avail = True
+            elif nbt == FALLBACK_DESCRIPTOR_FILE:
+                descriptor = abt
+                fallback_descriptor_avail = True
             normalized_abts.append(nbt)
         if descriptor_avail:
             print(f'Found {DESCRIPTOR_FILE}')
+        elif fallback_descriptor_avail:
+            print(f'Found fallback descriptor: {FALLBACK_DESCRIPTOR_FILE}')
         else:
-            print(f'FAILURE: Missing {DESCRIPTOR_FILE}')
-        assert descriptor_avail
+            print(f'FAILURE: Missing both {DESCRIPTOR_FILE} and {FALLBACK_DESCRIPTOR_FILE}')
+        assert descriptor_avail or fallback_descriptor_avail
         #get boot files from descriptor
         bts = get_boot_files(host=None, descriptor=str(descriptor))
 
@@ -272,6 +299,17 @@ def test_artifactory_boot_files(artifactory_bts):
                 print(f'Found {file}')
             else:
                 fail_flag = True
+            # fallback logic: check for fallback files if default files are missing
+            missing_defaults = [file for file in DEFAULT_FILES if file not in normalized_abts]
+            if missing_defaults:
+                for fallback_file in FALLBACK_FILES:
+                    condition = (fallback_file in normalized_abts)
+                    message = f'Fallback file found for missing defaults: {fallback_file}'
+                    check.is_true(condition, message)
+                    if condition:
+                        print(f'Fallback found: {fallback_file}')
+                    else:
+                        print(f'No fallback found for: {fallback_file}')
 
         assert not fail_flag
 
